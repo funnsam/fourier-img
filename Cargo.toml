@@ -7,3 +7,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+num-complex = "0.4.6"
+raylib = "5.0.1"
+smoldft = { version = "0.1.0", path = "smoldft" }
