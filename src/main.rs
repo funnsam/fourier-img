@@ -12,6 +12,7 @@ use num_complex::*;
 use raylib::prelude::*;
 
 const TRAIL_SIZE: usize = 5000;
+const TRAIL_SCALE: f32 = 0.25;
 
 fn main() {
     let (mut rl, thread) = raylib::init()
@@ -32,35 +33,20 @@ fn main() {
 
     let mut t = 0.0;
 
-    // let img = vec![
-    //     c64(-100.0, -100.0),
-    //     c64(0.0, -100.0),
-    //     c64(100.0, -100.0),
-    //     c64(100.0, 0.0),
-    //     c64(100.0, 100.0),
-    //     c64(0.0, 100.0),
-    //     c64(-100.0, 100.0),
-    //     c64(-100.0, 0.0),
-    //     // c64(100.0 * (0.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (0.0 * std::f64::consts::FRAC_PI_3).sin()),
-    //     // c64(100.0 * (2.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (2.0 * std::f64::consts::FRAC_PI_3).sin()),
-    //     // c64(100.0 * (4.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (4.0 * std::f64::consts::FRAC_PI_3).sin()),
-    // ];
     let img = load_img();
     let mut coeff = vec![Complex64::default(); img.len()];
     smoldft::compute_dft_to(&mut coeff, &img);
     coeff.iter_mut().for_each(|i| *i /= img.len() as f64);
 
-    println!("{coeff:?}");
-
-    let mut last_sum = Complex64::default();
+    let mut last_sum = img[0];
 
     while !rl.window_should_close() {
         camera.zoom = (camera.zoom + rl.get_mouse_wheel_move_v().y).max(0.1).min(50.0);
 
         if rl.is_key_pressed(KeyboardKey::KEY_L) {
             lock_on = match lock_on {
-                Some(_) => None,
-                None => Some(img.len() - 1),
+                Some(n) if n == img.len() - 1 => None,
+                _ => Some(img.len() - 1),
             };
         }
 
@@ -100,12 +86,12 @@ fn main() {
         // update trail
         {
             let mut d = d.begin_texture_mode(&thread, &mut trail2);
-            d.clear_background(Color::new(73, 77, 100, 0));
+            d.clear_background(Color::new(166, 218, 149, 0));
             d.draw_texture(&trail, 0, 0, Color::new(255, 255, 255, (d.get_frame_time() * 2000.0).min(255.0) as u8));
 
             let c = (TRAIL_SIZE / 2) as f32;
-            let to_v = |s: Complex64| Vector2::new(s.re as f32 + c, -s.im as f32 + c);
-            d.draw_line_ex(to_v(last_sum), to_v(sum), 2.0, Color::new(202, 211, 245, 255));
+            let to_v = |s: Complex64| Vector2::new(s.re as f32 / TRAIL_SCALE + c, -(s.im as f32 / TRAIL_SCALE) + c);
+            d.draw_line_ex(to_v(last_sum), to_v(sum), 2.0 / TRAIL_SCALE, Color::new(166, 218, 149, 255));
             last_sum = sum;
         }
 
@@ -118,28 +104,36 @@ fn main() {
         // draw world elements
         {
             let mut d = d.begin_mode2D(camera);
-            d.draw_line(i32::MIN, 0, i32::MAX, 0, Color::new(110, 115, 141, 255));
-            d.draw_line(0, i32::MIN, 0, i32::MAX, Color::new(110, 115, 141, 255));
-            d.draw_texture(&trail, -(TRAIL_SIZE as i32 / 2), -(TRAIL_SIZE as i32 / 2), Color::WHITE);
+            d.draw_line(i32::MIN, 0, i32::MAX, 0, Color::new(73, 77, 100, 255));
+            d.draw_line(0, i32::MIN, 0, i32::MAX, Color::new(73, 77, 100, 255));
+            let o = -(TRAIL_SIZE as i32 / 2) as f32 * TRAIL_SCALE;
+            d.draw_texture_ex(&trail, Vector2::new(o, o), 0.0, TRAIL_SCALE, Color::WHITE);
 
-            // for p in img.iter() {
-            //     d.draw_circle_v(cmplx_to_vec(*p), 5.0, Color::new(166, 218, 149, 255));
-            // }
+            if d.is_key_down(KeyboardKey::KEY_S) {
+                for p in img.iter() {
+                    d.draw_circle_v(cmplx_to_vec(*p), 5.0, Color::new(166, 218, 149, 255));
+                }
+            }
 
             let mut last = Vector2::default();
+            for (p, c) in ::core::iter::once(&c64(0.0, 0.0)).chain(pts.iter()).zip(coeff.iter()) {
+                let dst = (c.re * c.re + c.im * c.im).sqrt();
+                unsafe {
+                    raylib::ffi::DrawCircleLinesV(
+                        cmplx_to_vec(*p).into(),
+                        dst as _,
+                        Color::new(128, 135, 162, 255).into(),
+                    );
+                }
+            }
+
             for p in pts.iter() {
                 let p = cmplx_to_vec(*p);
-                d.draw_line_ex(last, p, 1.5, Color::new(54, 58, 79, 255));
+                d.draw_line_ex(last, p, 1.5, Color::new(147, 154, 183, 255));
                 last = p;
             }
 
-            for (i, p) in pts.iter().enumerate() {
-                d.draw_circle_v(cmplx_to_vec(*p), 2.5, if lock_on == Some(i) {
-                    Color::new(237, 135, 150, 255)
-                } else {
-                    Color::new(73, 77, 100, 255)
-                });
-            }
+            d.draw_circle_v(cmplx_to_vec(sum), 2.5, Color::new(237, 135, 150, 255));
         }
 
         // draw ui
@@ -156,8 +150,10 @@ fn main() {
         d.draw_rectangle_v(mtip_pos, mtip_size, Color::new(24, 25, 38, 127));
         d.draw_text_ex(&font, &mtip_text, mtip_pos, 20.0, 0.0, Color::new(147, 154, 183, 255));
 
-        t += d.get_frame_time() as f64 * 0.2;
-        if t >= 1.0 { t -= 1.0; }
+        if d.is_key_up(KeyboardKey::KEY_P) {
+            t += d.get_frame_time() as f64 * 0.2;
+            if t >= 1.0 { t -= 1.0; }
+        }
     }
 }
 
