@@ -11,14 +11,19 @@
 use num_complex::*;
 use raylib::prelude::*;
 
-const CIRCLES: usize = 8;
+const TRAIL_SIZE: usize = 5000;
 
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(640, 480)
         .title("DFT my beloved")
+        .msaa_4x()
         .build();
+    rl.set_exit_key(None);
+
     let font = rl.load_font_ex(&thread, "font.ttf", 20, None).unwrap();
+    let mut trail = rl.load_render_texture(&thread, TRAIL_SIZE as _, TRAIL_SIZE as _).unwrap();
+    let mut trail2 = rl.load_render_texture(&thread, TRAIL_SIZE as _, TRAIL_SIZE as _).unwrap();
 
     let mut camera = camera::Camera2D::default();
     camera.zoom = 1.0;
@@ -27,24 +32,27 @@ fn main() {
 
     let mut t = 0.0;
 
-    let img = &[
-        c64(-100.0, -100.0),
-        c64(0.0, -100.0),
-        c64(100.0, -100.0),
-        c64(100.0, 0.0),
-        c64(100.0, 100.0),
-        c64(0.0, 100.0),
-        c64(-100.0, 100.0),
-        c64(-100.0, 0.0),
-        // c64(100.0 * (0.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (0.0 * std::f64::consts::FRAC_PI_3).sin()),
-        // c64(100.0 * (2.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (2.0 * std::f64::consts::FRAC_PI_3).sin()),
-        // c64(100.0 * (4.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (4.0 * std::f64::consts::FRAC_PI_3).sin()),
-    ];
-    let mut coeff = [Complex64::default(); CIRCLES];
-    smoldft::compute_dft_to(&mut coeff, img);
-    coeff.iter_mut().for_each(|i| *i /= CIRCLES as f64);
+    // let img = vec![
+    //     c64(-100.0, -100.0),
+    //     c64(0.0, -100.0),
+    //     c64(100.0, -100.0),
+    //     c64(100.0, 0.0),
+    //     c64(100.0, 100.0),
+    //     c64(0.0, 100.0),
+    //     c64(-100.0, 100.0),
+    //     c64(-100.0, 0.0),
+    //     // c64(100.0 * (0.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (0.0 * std::f64::consts::FRAC_PI_3).sin()),
+    //     // c64(100.0 * (2.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (2.0 * std::f64::consts::FRAC_PI_3).sin()),
+    //     // c64(100.0 * (4.0 * std::f64::consts::FRAC_PI_3).cos(), 100.0 * (4.0 * std::f64::consts::FRAC_PI_3).sin()),
+    // ];
+    let img = load_img();
+    let mut coeff = vec![Complex64::default(); img.len()];
+    smoldft::compute_dft_to(&mut coeff, &img);
+    coeff.iter_mut().for_each(|i| *i /= img.len() as f64);
 
     println!("{coeff:?}");
+
+    let mut last_sum = Complex64::default();
 
     while !rl.window_should_close() {
         camera.zoom = (camera.zoom + rl.get_mouse_wheel_move_v().y).max(0.1).min(50.0);
@@ -52,11 +60,11 @@ fn main() {
         if rl.is_key_pressed(KeyboardKey::KEY_L) {
             lock_on = match lock_on {
                 Some(_) => None,
-                None => Some(CIRCLES - 1),
+                None => Some(img.len() - 1),
             };
         }
 
-        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) && lock_on.is_none() {
             camera.target -= rl.get_mouse_delta() / camera.zoom;
         }
 
@@ -64,48 +72,83 @@ fn main() {
         let mouse_w = rl.get_screen_to_world2D(mouse_s, camera);
 
         let mut d = rl.begin_drawing(&thread);
-
         d.clear_background(Color::new(36, 39, 58, 255));
-        d.draw_text_ex(&font, &format!("{t:.02} {lock_on:?}"), Vector2::new(12.0, 12.0), 20.0, 0.0, Color::new(202, 211, 245, 255));
 
+        let mut sum = Complex64::default();
+        let mut pts = Vec::with_capacity(coeff.len());
+        compute_pts(&coeff, t, &mut sum, &mut pts);
+
+        // update camera and focus
+        let mut cdst = f32::INFINITY;
+        for (i, p) in pts.iter().enumerate() {
+            let p = cmplx_to_vec(*p);
+
+            if lock_on == Some(i) {
+                camera.target = p;
+            }
+
+            if d.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
+                let dp = mouse_w - p;
+                let dst = dp.x * dp.x + dp.y * dp.y;
+                if cdst > dst && dst < 10.0 {
+                    lock_on = Some(i);
+                    cdst = dst;
+                }
+            }
+        }
+
+        // update trail
+        {
+            let mut d = d.begin_texture_mode(&thread, &mut trail2);
+            d.clear_background(Color::new(73, 77, 100, 0));
+            d.draw_texture(&trail, 0, 0, Color::new(255, 255, 255, (d.get_frame_time() * 2000.0).min(255.0) as u8));
+
+            let c = (TRAIL_SIZE / 2) as f32;
+            let to_v = |s: Complex64| Vector2::new(s.re as f32 + c, -s.im as f32 + c);
+            d.draw_line_ex(to_v(last_sum), to_v(sum), 2.0, Color::new(202, 211, 245, 255));
+            last_sum = sum;
+        }
+
+        // copy trail from temp texture
+        {
+            let mut d = d.begin_texture_mode(&thread, &mut trail);
+            d.draw_texture(&trail2, 0, 0, Color::new(255, 255, 255, 255));
+        }
+
+        // draw world elements
         {
             let mut d = d.begin_mode2D(camera);
             d.draw_line(i32::MIN, 0, i32::MAX, 0, Color::new(110, 115, 141, 255));
             d.draw_line(0, i32::MIN, 0, i32::MAX, Color::new(110, 115, 141, 255));
+            d.draw_texture(&trail, -(TRAIL_SIZE as i32 / 2), -(TRAIL_SIZE as i32 / 2), Color::WHITE);
 
-            for p in img.iter() {
-                d.draw_circle_v(cmplx_to_vec(*p), 5.0, Color::new(166, 218, 149, 255));
+            // for p in img.iter() {
+            //     d.draw_circle_v(cmplx_to_vec(*p), 5.0, Color::new(166, 218, 149, 255));
+            // }
+
+            let mut last = Vector2::default();
+            for p in pts.iter() {
+                let p = cmplx_to_vec(*p);
+                d.draw_line_ex(last, p, 1.5, Color::new(54, 58, 79, 255));
+                last = p;
             }
 
-            let mut sum = Complex64::default();
-            let mut cdst = f32::INFINITY;
-
-            for (n, c) in coeff.iter().enumerate() {
-                let psum = cmplx_to_vec(sum);
-                let rn = if n <= CIRCLES / 2 { n as isize } else { n as isize - CIRCLES as isize };
-                sum += c * (Complex64::i() * std::f64::consts::TAU * t * rn as f64).exp();
-                let sum = cmplx_to_vec(sum);
-
-                d.draw_line_ex(psum, sum, 1.5, Color::new(128, 135, 162, 255));
-                d.draw_circle_v(sum, 2.5, if lock_on.map_or(false, |i| i == n) {
+            for (i, p) in pts.iter().enumerate() {
+                d.draw_circle_v(cmplx_to_vec(*p), 2.5, if lock_on == Some(i) {
                     Color::new(237, 135, 150, 255)
                 } else {
-                    Color::new(147, 154, 183, 255)
+                    Color::new(73, 77, 100, 255)
                 });
-
-                if lock_on.map_or(false, |i| i == n) {
-                    camera.target = sum;
-                }
-
-                if d.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
-                    let dst = mouse_w.distance_to(sum);
-                    if cdst > dst && dst < 10.0 {
-                        lock_on = Some(n);
-                        cdst = dst;
-                    }
-                }
             }
         }
+
+        // draw ui
+        let stat = if let Some(lock) = lock_on {
+            format!("t = {t:.02} (camera locked on #{lock})")
+        } else {
+            format!("t = {t:.02}")
+        };
+        d.draw_text_ex(&font, &stat, Vector2::new(12.0, 12.0), 20.0, 0.0, Color::new(202, 211, 245, 255));
 
         let mtip_text = format!("{:.02} + {:.02}i", mouse_w.x, -mouse_w.y);
         let mtip_pos = mouse_s + Vector2::new(15.0, 15.0);
@@ -120,4 +163,45 @@ fn main() {
 
 fn cmplx_to_vec(c: Complex64) -> Vector2 {
     Vector2::new(c.re as f32, -c.im as f32)
+}
+
+fn load_img() -> Vec<Complex64> {
+    let f = std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap();
+    f.lines()
+        .map(|l| {
+            let (x, y) = l.split_once(' ').unwrap();
+            c64(x.parse::<f64>().unwrap(), y.parse().unwrap())
+        })
+        .collect()
+}
+
+fn compute_pts(coeff: &[Complex64], t: f64, sum: &mut Complex64, pts: &mut Vec<Complex64>) {
+    // let mut cdst = f32::INFINITY;
+    for (n, c) in coeff.iter().enumerate() {
+        // let psum = cmplx_to_vec(*sum);
+        let rn = if n <= coeff.len() / 2 { n as isize } else { n as isize - coeff.len() as isize };
+        *sum += c * (Complex64::i() * std::f64::consts::TAU * t * rn as f64).exp();
+        // let sum = cmplx_to_vec(*sum);
+
+        // d.draw_line_ex(psum, sum, 1.5, Color::new(54, 58, 79, 255));
+        // d.draw_circle_v(sum, 2.5, if lock_on.map_or(false, |i| i == n) {
+        //     Color::new(237, 135, 150, 255)
+        // } else {
+        //     Color::new(73, 77, 100, 255)
+        // });
+
+        // if lock_on.map_or(false, |i| i == n) {
+        //     camera.target = sum;
+        // }
+
+        // if d.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
+        //     let dst = mouse_w.distance_to(sum);
+        //     if cdst > dst && dst < 10.0 {
+        //         lock_on = Some(n);
+        //         cdst = dst;
+        //     }
+        // }
+
+        pts.push(*sum);
+    }
 }
