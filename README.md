@@ -1,1 +1,1 @@
-use [https://github.com/funnsam/svg2pts/](this tool) to generate points
+use [this tool](https://github.com/funnsam/svg2pts/) to generate points
