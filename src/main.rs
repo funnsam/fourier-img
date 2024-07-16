@@ -111,7 +111,7 @@ fn main() {
 
             if d.is_key_down(KeyboardKey::KEY_S) {
                 for p in img.iter() {
-                    d.draw_circle_v(cmplx_to_vec(*p), 5.0, Color::new(166, 218, 149, 255));
+                    d.draw_circle_v(cmplx_to_vec(*p), 1.0, Color::new(138, 173, 244, 255));
                 }
             }
 
