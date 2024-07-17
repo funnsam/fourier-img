@@ -11,12 +11,12 @@
 use num_complex::*;
 use raylib::prelude::*;
 
-const TRAIL_SIZE: usize = 5000;
-const TRAIL_SCALE: f32 = 0.25;
+const TRAIL_SIZE: usize = 2048;
+const TRAIL_SCALE: f32 = 512.0 / TRAIL_SIZE as f32;
 
 fn main() {
     let (mut rl, thread) = raylib::init()
-        .size(640, 480)
+        .resizable()
         .title("DFT my beloved")
         .msaa_4x()
         .build();
@@ -28,7 +28,6 @@ fn main() {
 
     let mut camera = camera::Camera2D::default();
     camera.zoom = 1.0;
-    camera.offset = Vector2::new(rl.get_screen_width() as f32 / 2.0, rl.get_screen_height() as f32 / 2.0);
     let mut lock_on = None;
 
     let mut t = 0.0;
@@ -41,6 +40,7 @@ fn main() {
     let mut last_sum = img[0];
 
     while !rl.window_should_close() {
+        camera.offset = Vector2::new(rl.get_screen_width() as f32 / 2.0, rl.get_screen_height() as f32 / 2.0);
         camera.zoom = (camera.zoom + rl.get_mouse_wheel_move_v().y).max(0.1).min(50.0);
 
         if rl.is_key_pressed(KeyboardKey::KEY_L) {
@@ -137,11 +137,11 @@ fn main() {
         }
 
         // draw ui
-        let stat = if let Some(lock) = lock_on {
-            format!("t = {t:.02} (camera locked on #{lock})")
-        } else {
-            format!("t = {t:.02}")
+        let mut stat = format!("FPS = {}, t = {t:.02}", d.get_fps());
+        if let Some(lock) = lock_on {
+            stat += &format!(" (camera locked on #{lock})")
         };
+
         d.draw_text_ex(&font, &stat, Vector2::new(12.0, 12.0), 20.0, 0.0, Color::new(202, 211, 245, 255));
 
         let mtip_text = format!("{:.02} + {:.02}i", mouse_w.x, -mouse_w.y);
@@ -172,31 +172,9 @@ fn load_img() -> Vec<Complex64> {
 }
 
 fn compute_pts(coeff: &[Complex64], t: f64, sum: &mut Complex64, pts: &mut Vec<Complex64>) {
-    // let mut cdst = f32::INFINITY;
     for (n, c) in coeff.iter().enumerate() {
-        // let psum = cmplx_to_vec(*sum);
         let rn = if n <= coeff.len() / 2 { n as isize } else { n as isize - coeff.len() as isize };
         *sum += c * (Complex64::i() * std::f64::consts::TAU * t * rn as f64).exp();
-        // let sum = cmplx_to_vec(*sum);
-
-        // d.draw_line_ex(psum, sum, 1.5, Color::new(54, 58, 79, 255));
-        // d.draw_circle_v(sum, 2.5, if lock_on.map_or(false, |i| i == n) {
-        //     Color::new(237, 135, 150, 255)
-        // } else {
-        //     Color::new(73, 77, 100, 255)
-        // });
-
-        // if lock_on.map_or(false, |i| i == n) {
-        //     camera.target = sum;
-        // }
-
-        // if d.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
-        //     let dst = mouse_w.distance_to(sum);
-        //     if cdst > dst && dst < 10.0 {
-        //         lock_on = Some(n);
-        //         cdst = dst;
-        //     }
-        // }
 
         pts.push(*sum);
     }
